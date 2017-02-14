@@ -1,0 +1,242 @@
+http://my.oschina.net/lenglingx/blog/504883
+http://udn.yyuap.com/doc/logstash-best-practice-cn/output/redis.html
+
+
+前提：server端和logstash端部署java
+将java解压到/usr/local/java/
+
+vi /etc/profile
+
+添加：
+export JAVA_HOME=/usr/local/java/jdk1.8.0_20
+export PATH=$JAVA_HOME/bin:$PATH
+export CLASSPATH=.:$JAVA_HOME/lib/dt.jar:$JAVA_HOME/lib/tools.jar
+
+
+1.elasticsearch
+
+下载：wget  https://download.elastic.co/elasticsearch/elasticsearch/elasticsearch-2.1.1.tar.gz  (下载老版本，直接替换版本号)
+
+cd /usr/local/src/
+
+tar xvf elasticsearch-2.1.1.tar.gz -C /server/
+
+mv elasticsearch-2.1.1/ elasticsearch
+
+修改配置：
+vi /server/elasticsearch/config/elasticsearch.yml
+记得数据文件和日志文件授权
+
+ cluster.name: my-log
+
+ node.name: node-1
+
+ node.rack: r1
+
+ path.data: /data/elasticsearch/data
+
+ path.logs: /data/log/elasticsearch/logs
+
+ network.host: 172.16.0.22
+
+ http.port: 9200
+
+ 安装插件：
+
+ /server/elasticsearch/bin/plugin install mobz/elasticsearch-head
+
+ 启动：
+
+ su esadmin
+
+ /server/elasticsearch/bin/elasticsearch -d
+
+
+ 2.kibana
+
+下载 wget https://download.elastic.co/kibana/kibana/kibana-4.3.0-linux-x64.tar.gz
+
+tar xvf kibana-4.3.0-linux-x64.tar.gz -C /server
+
+mv kibana-4.3.0/ kibana
+
+修改配置文件：
+
+vi /server/kibana/config/kibana.yml
+
+# server.port: 5601
+
+
+logstash客户端:
+将日志写入redis
+**************************
+
+input {
+ file {
+   path => ["/home/airag/apache-tomcat/logs/localhost_access_log.*.txt"]
+   type => "dubbo_tomcat"
+ }
+
+}
+
+output{
+    redis {
+        host => "172.18.0.12"
+        password => "airag!@#"
+        data_type => "list"
+        key => "dubbo_tomcat"
+   }
+}
+
+input {
+ file {
+   path => ["/data/log/zookeeper/logs/version-2/log.*"]
+   type => "zookeeper_log"
+ }
+
+}
+
+output{
+    redis {
+        host => "172.18.0.12"
+        password => "airag!@#"
+        data_type => "list"
+        key => "zookeeper_log"
+   }
+}
+
+
+
+服务器端logstash2.1.1配置
+logstash从redis读数据，写入es
+注意多一个数据流在一个文件中，input多个源，根据type将其分类到指定到index
+
+input {
+    redis {
+        data_type => "list"
+        key => "service1_ae-service"
+        host => "127.0.0.1"
+        port => 6379
+        password => "airag!@#"
+        db => 0
+        threads => 10
+        }
+    redis {
+        data_type => "list"
+        key => "service2_ae-service"
+        host => "127.0.0.1"
+        port => 6379
+        password => "airag!@#"
+        db => 0
+        threads => 10
+        }
+}
+
+output {
+    output {
+        if [type] == "service2_ae-service"{
+        elasticsearch {
+        hosts => "172.18.0.12"
+        index => "service2_ae-service"
+        codec => "json"
+        }
+        }
+
+        if [type] == "ae-service1"{
+        elasticsearch {
+        hosts => "172.18.0.12"
+        index => "service1_ae-service"
+        codec => "json"
+        }
+        }
+}
+
+
+注意输出的type，这个是在客户端input的时候指定的
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+客户端logstash配置：
+
+input {
+ file {
+   path => ["/data/log/mongodb/monitor.log"]
+   type => "mongodb_log"
+ }
+
+}
+
+output{
+    redis {
+        host => "172.16.0.22"
+        data_type => "list"
+        key => "mongodb_log"
+   }
+}
+
+
+/home/airag/services/ae-service/logs/ae-service.log
+
+
+service1_ae-service
+
+
+客户端logstash2.1.1配置：
+
+input {
+ file {
+   path => ["/home/airag/services/ae-service/logs/ae-service.log"]
+   type => "service1_ae-service"
+ }
+
+}
+
+output{
+    redis {
+        host => "172.18.0.12"
+        password => "airag!@#"
+        data_type => "list"
+        key => "service1_ae-service"
+   }
+}
+
+/server/logstash/bin/logstash -f /server/logstash/conf/logstash.conf &
+
+
+/home/airag/apache-tomcat/logs/localhost_access_log.*.txt
+
+/data/log/zookeeper/logs/version-2/log.*
+
+/data/log/mongodb/mongodb.log
+
+
+/server/tomcat/logs/localhost_access_log.*.txt
+
+
+
+
+
+/server/open-falcon/agent/control start
+
+/server/redis/redis-server /server/redis/redis.conf &
+
+su -l esadmin -c "/server/elasticsearch/bin/elasticsearch -d"
+
+/server/kibana/bin/kibana &
+
+/server/logstash/bin/logstash -f /server/logstash/logstash.conf &
+
+
+
